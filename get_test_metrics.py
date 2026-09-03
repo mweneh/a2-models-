@@ -2,14 +2,15 @@ import pandas as pd
 import numpy as np
 
 # Reconstruct the process to get the test metrics
-df = pd.read_csv('../AML_Book-Data/Data/a1_cleaned_data.csv')
+df = pd.read_csv('./data/a1_cleaned_data.csv')
 df['ts'] = pd.to_datetime(df['ts'])
 df.sort_values('ts', inplace=True)
 df.reset_index(drop=True, inplace=True)
 
 TARGET = 'is_fraud'
-FEATURES = [c for c in df.columns if c not in [TARGET, 'ts', 'customer_id', 'manual_review_score', 'settlement_status', 'transaction_id']]
-CATEGORICAL = [c for c in FEATURES if df[c].dtype == 'object']
+IGNORE_COLS = ['txn_id', 'msisdn', 'reg_id', 'account_name', 'agent_id', 'device_id', 'counterparty', 'amount', 'gps_lat', 'gps_lon', 'balance_after', 'amount_signed', 'manual_review_score', 'settlement_status', TARGET, 'ts', 'customer_id']
+FEATURES = [c for c in df.columns if c not in IGNORE_COLS]
+CATEGORICAL = [c for c in FEATURES if df[c].dtype == 'object' or df[c].dtype == 'string' or df[c].dtype.name == 'string']
 NUMERICAL = [c for c in FEATURES if c not in CATEGORICAL]
 
 # Chronological split
@@ -33,19 +34,18 @@ def build_preprocessor():
     return ColumnTransformer([('num', num_pipe, NUMERICAL), ('cat', cat_pipe, CATEGORICAL)])
 
 best_params = {'n_estimators': 164, 'max_depth': 6, 'learning_rate': 0.001328015443289555, 'num_leaves': 56, 'scale_pos_weight': 5.14678758265047}
-final_clf = LGBMClassifier(**best_params, random_state=42, n_jobs=-1, verbose=-1)
+final_clf = LGBMClassifier(**best_params, random_state=42, n_jobs=1, verbose=-1)
 final_pipe = Pipeline([('prep', build_preprocessor()), ('clf', final_clf)])
 
-from sklearn.calibration import IsotonicRegression
-from sklearn.model_selection import KFold
-kf = KFold(n_splits=3)
-oof_preds = np.zeros(len(dev_df))
-for tr, te in kf.split(dev_df):
-    final_pipe.fit(dev_df.iloc[tr][FEATURES], dev_df.iloc[tr][TARGET])
-    oof_preds[te] = final_pipe.predict_proba(dev_df.iloc[te][FEATURES])[:, 1]
+from sklearn.model_selection import train_test_split
+dev_train, dev_val = train_test_split(dev_df, test_size=0.2, random_state=42)
+final_pipe.fit(dev_train[FEATURES], dev_train[TARGET])
+oof_preds = final_pipe.predict_proba(dev_val[FEATURES])[:, 1]
+dev_target_val = dev_val[TARGET]
 
+from sklearn.calibration import IsotonicRegression
 iso = IsotonicRegression(out_of_bounds='clip')
-iso.fit(oof_preds, dev_df[TARGET])
+iso.fit(oof_preds, dev_target_val)
 
 final_pipe.fit(dev_df[FEATURES], dev_df[TARGET])
 test_preds_uncal = final_pipe.predict_proba(X_test)[:, 1]
@@ -78,16 +78,5 @@ print(f"Test FNR: {fnr * 100:.2f}%")
 print(f"Test Total Cost: {test_total_cost}")
 print(f"Test Naive Cost: {naive_cost}")
 
-import shap
-prep = final_pipe.named_steps['prep']
-clf = final_pipe.named_steps['clf']
-X_test_transformed = prep.transform(X_test.sample(1000, random_state=42))
-explainer = shap.TreeExplainer(clf)
-shap_values = explainer.shap_values(X_test_transformed)
-cat_features = prep.transformers_[1][1].named_steps['onehot'].get_feature_names_out(CATEGORICAL)
-all_features = NUMERICAL + list(cat_features)
-vals = np.abs(shap_values[1] if isinstance(shap_values, list) else shap_values).mean(0)
-feature_importance = pd.DataFrame(list(zip(all_features, vals)), columns=['col_name', 'feature_importance_vals'])
-feature_importance.sort_values(by=['feature_importance_vals'], ascending=False, inplace=True)
-print("Top 5 SHAP features:", feature_importance.head(5)['col_name'].tolist())
+print("Done")
 

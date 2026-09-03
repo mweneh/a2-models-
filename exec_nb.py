@@ -10,7 +10,7 @@ warnings.filterwarnings('ignore')
 np.random.seed(42)
 
 # Load data
-df = pd.read_csv('../AML_Book-Data/Data/a1_cleaned_data.csv')
+df = pd.read_csv('./data/a1_cleaned_data.csv')
 df['ts'] = pd.to_datetime(df['ts'])
 df.sort_values('ts', inplace=True)
 df.reset_index(drop=True, inplace=True)
